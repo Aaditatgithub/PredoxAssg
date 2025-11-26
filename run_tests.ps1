@@ -1,10 +1,19 @@
 # ---------------------------------------------
 # Conversational Insight Generator Test Runner
 # Sends all 10 sample transcripts to /analyze_call
+# With initial delay + UTF-8 body encoding + basic error handling
 # ---------------------------------------------
 
+# Force console encodings to UTF-8 (helps with display/logging)
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 $endpoint = "http://127.0.0.1:8000/analyze_call"
-$headers = @{ "Content-Type" = "application/json" }
+$headers  = @{ "Content-Type" = "application/json; charset=utf-8" }
+
+# Config
+$initialDelaySeconds     = 10   # Wait this long before the FIRST request
+$delayBetweenRequestsSec = 1    # Wait between each transcript
 
 $transcripts = @(
 @"
@@ -39,17 +48,45 @@ Agent: Ms. Pooja, hum aapko 75 days se call kar rahe hain. Aap cooperate nahi ka
 "@
 )
 
+Write-Host "Waiting $initialDelaySeconds seconds before sending first request..." -ForegroundColor Yellow
+Start-Sleep -Seconds $initialDelaySeconds
+
 Write-Host "Sending transcripts..." -ForegroundColor Cyan
 
 $count = 1
 foreach ($t in $transcripts) {
     Write-Host "`n--- Sending transcript $count ---"
-    
-    $body = @{ transcript = $t } | ConvertTo-Json -Depth 10
-    $response = Invoke-WebRequest -Method POST -Uri $endpoint -Headers $headers -Body $body
-    
-    Write-Host $response.Content
-    Start-Sleep -Seconds 1
+
+    # Build the JSON payload
+    $payload = [pscustomobject]@{
+        transcript = $t.Trim()
+    }
+
+    $body = $payload | ConvertTo-Json -Depth 10 -Compress
+
+    # Convert JSON string to raw UTF-8 bytes (no BOM)
+    $utf8    = New-Object System.Text.UTF8Encoding($false)
+    $bodyRaw = $utf8.GetBytes($body)
+
+    # Debug: see the JSON being sent
+    Write-Host "Request body:`n$body`n"
+
+    try {
+        $response = Invoke-WebRequest `
+            -Method POST `
+            -Uri $endpoint `
+            -Headers $headers `
+            -Body $bodyRaw `
+            -ErrorAction Stop
+
+        Write-Host "Response:" $response.Content
+    }
+    catch {
+        Write-Host "Request failed: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Server said (if any): $($_.ErrorDetails.Message)" -ForegroundColor DarkYellow
+    }
+
+    Start-Sleep -Seconds $delayBetweenRequestsSec
     $count++
 }
 
